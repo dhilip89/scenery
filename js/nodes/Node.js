@@ -15,6 +15,8 @@ define( function( require ) {
   var inherit = require( 'PHET_CORE/inherit' );
   var extend = require( 'PHET_CORE/extend' );
   var Events = require( 'AXON/Events' );
+  var Property = require( 'AXON/Property' );
+  var Emitter = require( 'AXON/Emitter' );
   var Bounds2 = require( 'DOT/Bounds2' );
   var Transform3 = require( 'DOT/Transform3' );
   var Matrix3 = require( 'DOT/Matrix3' );
@@ -147,6 +149,8 @@ define( function( require ) {
     // supertype call to axon.Events (should just initialize a few properties here, notably _eventListeners and _staticEventListeners)
     Events.call( this );
 
+    this.initializeProperties( Node );
+
     // NOTE: All member properties with names starting with '_' are assumed to be @private!
 
     // @private {number} - Assigns a unique ID to this node (allows trails to get a unique list of IDs)
@@ -164,10 +168,6 @@ define( function( require ) {
     // @protected {Array.<Drawable>} - Drawable states that need to be updated on mutations. Generally added by SVG and
     // DOM elements that need to closely track state (possibly by Canvas to maintain dirty state).
     this._drawables = [];
-
-    // @private {boolean} - Whether this node (and its children) will be visible when the scene is updated. Visible
-    // nodes by default will not be pickable either.
-    this._visible = true;
 
     // @private {number} - Opacity, in the range from 0 (fully transparent) to 1 (fully opaque).
     this._opacity = 1;
@@ -259,9 +259,6 @@ define( function( require ) {
 
     // @private {Bounds2} - [mutable] Bounds for this node and its children in the "local" coordinate frame.
     this._localBounds = Bounds2.NOTHING.copy();
-
-    // @private {Bounds2} - [mutable] Bounds just for this node, in the "local" coordinate frame.
-    this._selfBounds = Bounds2.NOTHING.copy();
 
     // @private {Bounds2} - [mutable] Bounds just for children of this node (and sub-trees), in the "local" coordinate frame.
     this._childBounds = Bounds2.NOTHING.copy();
@@ -786,6 +783,8 @@ define( function( require ) {
         this._selfBoundsDirty = false;
 
         if ( didSelfBoundsChange ) {
+          this.notifyPropertySelfBounds();
+          // TODO: phase out
           this.trigger0( 'selfBounds' );
         }
 
@@ -1122,21 +1121,6 @@ define( function( require ) {
       assert && assert( ourChild === itsParent );
       return ourChild;
     },
-
-    /**
-     * Returns our selfBounds (the bounds for this Node's content in the local coordinates, excluding anything from our
-     * children and descendants).
-     * @public
-     *
-     * NOTE: Do NOT mutate the returned value!
-     *
-     * @returns {Bounds2}
-     */
-    getSelfBounds: function() {
-      this.validateSelfBounds();
-      return this._selfBounds;
-    },
-    get selfBounds() { return this.getSelfBounds(); },
 
     /**
      * Returns a bounding box that should contain all self content in the local coordinate frame (our normal self bounds
@@ -2300,69 +2284,6 @@ define( function( require ) {
       return this._id;
     },
     get id() { return this.getId(); },
-
-    /**
-     * Sets whether this node is visible.
-     * @public
-     *
-     * @param {boolean} visible
-     * @returns {Node} - Returns 'this' reference, for chaining
-     */
-    setVisible: function( visible ) {
-      assert && assert( typeof visible === 'boolean' );
-
-      if ( visible !== this._visible ) {
-        this._visible = visible;
-
-        // changing visibility can affect pickability pruning, which affects mouse/touch bounds
-        this._picker.onVisibilityChange();
-        if ( assertSlow ) { this._picker.audit(); }
-
-        this.trigger0( 'visibility' );
-      }
-      return this;
-    },
-    set visible( value ) { this.setVisible( value ); },
-
-    /**
-     * Returns whether this node is visible.
-     * @public
-     *
-     * @returns {boolean}
-     */
-    isVisible: function() {
-      return this._visible;
-    },
-    get visible() { return this.isVisible(); },
-
-    /**
-     * Sets the opacity of this node (and its sub-tree), where 0 is fully transparent, and 1 is fully opaque.
-     * @public
-     *
-     * @param {number} opacity
-     */
-    setOpacity: function( opacity ) {
-      assert && assert( typeof opacity === 'number' );
-
-      var clampedOpacity = clamp( opacity, 0, 1 );
-      if ( clampedOpacity !== this._opacity ) {
-        this._opacity = clampedOpacity;
-
-        this.trigger0( 'opacity' );
-      }
-    },
-    set opacity( value ) { this.setOpacity( value ); },
-
-    /**
-     * Returns the opacity of this node.
-     * @public
-     *
-     * @returns {number}
-     */
-    getOpacity: function() {
-      return this._opacity;
-    },
-    get opacity() { return this.getOpacity(); },
 
     /**
      * Sets whether this node (and its subtree) will allow hit-testing (and thus user interaction), controlling what
@@ -4473,6 +4394,13 @@ define( function( require ) {
         this.changeBoundsEventCount( -1 );
         this._boundsEventSelfCount--;
       }
+    },
+
+    // TODO: doc
+    initializeProperties: function( type ) {
+      for ( var i = 0; i < type.initFunctions.length; i++ ) {
+        type.initFunctions[ i ].call( this );
+      }
     }
 
   }, Events.prototype, {
@@ -4530,6 +4458,266 @@ define( function( require ) {
       return index;
     }
   } ) );
+
+  // TODO: doc
+  function NodeProperty( node, name, internalName ) {
+    this._node = node;
+    this._name = name;
+    this._initialValue = node[ internalName ];
+
+    this._emitter = new Emitter();
+  }
+  inherit( Property, NodeProperty, {
+    elementType: null,
+
+    nodePropertyNotify: function( newValue, oldValue ) {
+      this._emitter.emit2( newValue, oldValue );
+    },
+
+    link: function( observer ) {
+      this.lazyLink( observer );
+      observer( this.value, null );
+    },
+    linkWithDisposal: function( disposeEmitter, observer ) {
+      var self = this;
+      this.link( observer );
+      disposeEmitter.addListener( function() {
+        self.unlink( observer );
+        disposeEmitter.removeListener( this );
+      } );
+    },
+    lazyLink: function( observer ) {
+      assert && assert( !this._emitter.hasListener( observer ), 'Should not allow duplicate listeners' );
+      this._emitter.addListener( observer );
+    },
+    unlink: function( observer ) {
+      assert && assert( this._emitter.hasListener( observer ), 'Should not remove listener multiple times' );
+      this._emitter.removeListener( observer );
+    },
+    unlinkAll: function( observer ) {
+      this._emitter.removeAllListeners();
+    },
+    linkAttribute: function( object, attributeName ) {
+      var handle = function( value ) {object[ attributeName ] = value;};
+      this.link( handle );
+      return handle;
+    },
+    unlinkAttribute: function( observer ) { this.unlink( observer ); },
+    once: function( observer ) {
+      var self = this;
+      var wrapper = function( newValue, oldValue ) {
+        self.unlink( wrapper );
+        observer( newValue, oldValue );
+      };
+      this.lazyLink( wrapper );
+      return wrapper;
+    },
+    debug: function( name ) {
+      var observer = function( value ) { console.log( name, value ); };
+      this.link( observer );
+      return observer;
+    },
+    onValue: function( value, observer ) {
+      var self = this;
+      var onValueObserver = function( v ) {
+        if ( self.areValuesEqual( v, value ) ) {
+          observer();
+        }
+      };
+      this.link( onValueObserver );
+      return onValueObserver;
+    },
+    dispose: function() {},
+    hasListener: function( listener ) {
+      return this._emitter.hasListener( listener );
+    },
+    hasListeners: function() {
+      return this._emitter.hasListeners();
+    },
+
+    // maybe shouldn't be public?
+    areValuesEqual: function( a, b ) { return a === b; },
+
+    // shouldn't be called?
+    notifyObserversStatic: function() { /* TODO */ },
+
+    get: function() { return this._node[ this._name ]; },
+    set: function( value ) { this._node[ this._name ] = value; return this; },
+    equalsValue: function( value ) { return this._node[ this._name ] === value; },
+    initialValue: function() { return this._initialValue; },
+    reset: function() { this.value = this.initialValue; },
+    get value() { return this._node[ this._name ]; },
+    set value( newValue ) { this._node[ this._name ] = newValue; },
+    toString: function() { return 'Property{' + this.get() + '}'; },
+    valueOf: function() { return this.toString(); },
+    get toggleFunction() { return this.toggle.bind( this ); },
+    toggle: function() { this.value = !this.value; }
+  } );
+
+  /**
+   * Sets up a property on Node or a subtype.
+   *
+   * Options: {
+   *   initialValue - If a function, then it is called to create the initial value
+   *   [internalName]
+   *   [capitalizedName]
+   *   [getMethodName]
+   *   [propertyName]
+   *   [compute] - function() => set internal before get
+   * }
+   *
+   * @param {Object} options - See above
+   */
+  Node.addLazyMutableReadOnlyProperty = function( type, name, options ) {
+    var initialValue = options.initialValue;
+    var internalName = options.internalName || '_' + name;
+    var capitalizedName = options.capitalizedName || name[ 0 ].toUpperCase() + name.slice( 1 );
+    var getMethodName = options.getMethodName || 'get' + capitalizedName;
+    var propertyName = options.propertyName || name + 'Property';
+    var oldValueName = '_old' + internalName;
+    var compute = options.compute;
+
+    var proto = type.prototype;
+
+    type.initFunctions = type.initFunctions || [];
+    type.initFunctions.push( function() {
+      this[ internalName ] = ( typeof initialValue === 'function' ) ? initialValue( this ) : initialValue;
+      this[ propertyName ] = new NodeProperty( this, name, internalName );
+      this[ oldValueName ] = ( typeof initialValue === 'function' ) ? initialValue( this ) : initialValue;
+    } );
+
+    proto[ getMethodName ] = function() {
+      compute && compute.call( this );
+      return this[ internalName ];
+    };
+
+    proto[ 'notifyProperty' + capitalizedName ] = function() {
+      this[ propertyName ].nodePropertyNotify( this[ internalName ], this[ oldValueName ] );
+      // TODO: this doesn't generalize, does it? And if we trigger a change off this notify, it won't work
+      this[ oldValueName ].set( this[ internalName ] );
+    };
+
+    // ES5 getter and setter
+    Object.defineProperty( proto, name, {
+      get: proto[ getMethodName ]
+    } );
+  };
+
+  /**
+   * Sets up a property on Node or a subtype.
+   *
+   * Options: {
+   *   initialValue - If a function, then it is called to create the initial value
+   *   [internalName]
+   *   [capitalizedName]
+   *   [getMethodName]
+   *   [setMethodName]
+   *   [propertyName]
+   *   [typeCheck] - function( value ) - Include asserts inside
+   *   [beforeSet] - function( newValue, oldValue )
+   *   [afterSet] - function( newValue, oldValue )
+   *   [afterNotify] - function( newValue, oldValue )
+   *   [mapValue] - function( value ) => value, before the guard
+   * }
+   *
+   * @param {Object} options - See above
+   */
+  Node.addProperty = function( type, name, options ) {
+    var initialValue = options.initialValue;
+    var internalName = options.internalName || '_' + name;
+    var capitalizedName = options.capitalizedName || name[ 0 ].toUpperCase() + name.slice( 1 );
+    var getMethodName = options.getMethodName || 'get' + capitalizedName;
+    var setMethodName = options.setMethodName || 'set' + capitalizedName;
+    var propertyName = options.propertyName || name + 'Property';
+    var typeCheck = options.typeCheck;
+    var beforeSet = options.beforeSet;
+    var afterSet = options.afterSet;
+    var afterNotify = options.afterNotify;
+    var mapValue = options.mapValue;
+
+    var proto = type.prototype;
+
+    type.initFunctions = type.initFunctions || [];
+    type.initFunctions.push( function() {
+      this[ internalName ] = ( typeof initialValue === 'function' ) ? initialValue( this ) : initialValue;
+      this[ propertyName ] = new NodeProperty( this, name, internalName );
+    } );
+
+    proto[ getMethodName ] = function() {
+      return this[ internalName ];
+    };
+
+    proto[ setMethodName ] = function( value ) {
+      assert && typeCheck && typeCheck.call( this, value );
+
+      var oldValue = this[ internalName ];
+
+      if ( mapValue ) {
+        value = mapValue.call( this, value );
+      }
+
+      if ( value !== oldValue ) {
+        beforeSet && beforeSet.call( this, value, oldValue );
+        this[ internalName ] = value;
+        afterSet && afterSet.call( this, value, oldValue );
+        this[ propertyName ].nodePropertyNotify( value, oldValue );
+        afterNotify && afterNotify.call( this, value, oldValue );
+      }
+
+      return this;
+    };
+
+    // ES5 getter and setter
+    Object.defineProperty( proto, name, {
+      set: proto[ setMethodName ],
+      get: proto[ getMethodName ]
+    } );
+  };
+
+  Node.addLazyMutableReadOnlyProperty( Node, 'selfBounds', {
+    initialValue: function() { return Bounds2.NOTHING.copy(); },
+    compute: function() { this.validateSelfBounds(); }
+  } );
+
+  /**
+   * {boolean} - Determines whether the node is visible or not.
+   * @public
+   *
+   * Additionally, when visible:false, the node cannot be picked, so it won't receive (or block) input events.
+   */
+  Node.addProperty( Node, 'visible', {
+    initialValue: true,
+    getMethodName: 'isVisible',
+    typeCheck: function( value ) {
+      assert && assert( typeof value === 'boolean', 'visible needs to be a boolean' );
+    },
+    afterSet: function( newValue, oldValue ) {
+      // changing visibility can affect pickability pruning, which affects mouse/touch bounds
+      this._picker.onVisibilityChange();
+      if ( assertSlow ) { this._picker.audit(); }
+
+      // TODO: phase out
+      this.trigger0( 'visibility' );
+    }
+  } );
+
+  /**
+   * {number} - Sets the opacity of this node (and its sub-tree), where 0 is fully transparent, and 1 is fully opaque.
+   * @public
+   */
+  Node.addProperty( Node, 'opacity', {
+    initialValue: 1,
+    mapValue: function( opacity ) {
+      return clamp( opacity, 0, 1 );
+    },
+    typeCheck: function( value ) {
+      assert && assert( typeof value === 'number', 'visible needs to be a boolean' );
+    },
+    afterSet: function( newValue, oldValue ) {
+      // TODO: phase out
+      this.trigger0( 'opacity' );
+    }
+  } );
 
   /*
    * Convenience locations
