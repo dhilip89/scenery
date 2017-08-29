@@ -15,10 +15,11 @@ define( function( require ) {
   var assertInstanceOf = require( 'ifphetio!PHET_IO/assertions/assertInstanceOf' );
   var phetioInherit = require( 'ifphetio!PHET_IO/phetioInherit' );
   var TBoolean = require( 'ifphetio!PHET_IO/types/TBoolean' );
+  var TFunctionWrapper = require( 'ifphetio!PHET_IO/types/TFunctionWrapper' );
   var TNumber = require( 'ifphetio!PHET_IO/types/TNumber' );
   var TObject = require( 'ifphetio!PHET_IO/types/TObject' );
   var TVoid = require( 'ifphetio!PHET_IO/types/TVoid' );
-  var TFunctionWrapper = require( 'ifphetio!PHET_IO/types/TFunctionWrapper' );
+  var toEventOnEmit = require( 'ifphetio!PHET_IO/toEventOnEmit' );
 
   /**
    * Wrapper type for phet/scenery's Node
@@ -29,6 +30,18 @@ define( function( require ) {
   function TNode( node, phetioID ) {
     TObject.call( this, node, phetioID );
     assertInstanceOf( node, phet.scenery.Node );
+
+    toEventOnEmit(
+      node.startedCallbacksForKeydownEmitter,
+      node.endedCallbacksForKeydownEmitter,
+      'model',
+      phetioID,
+      this.constructor,
+      'keydown',
+      function( keyCode, key, modifiers ) {
+        return { keyCode: keyCode, key: key, modifiers: modifiers };
+      } );
+
   }
 
   phetioInherit( TObject, 'TNode', TNode, {
@@ -119,7 +132,8 @@ define( function( require ) {
       documentation: 'Set the rotation of the node, in radians'
     }
   }, {
-    documentation: 'The base type for graphical and potentially interactive objects'
+    documentation: 'The base type for graphical and potentially interactive objects',
+    events: [ 'keydown' ]
   } );
 
   scenery.register( 'TNode', TNode );

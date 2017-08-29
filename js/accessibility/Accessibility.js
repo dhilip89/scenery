@@ -62,6 +62,7 @@ define( function( require ) {
   var extend = require( 'PHET_CORE/extend' );
   var AccessibilityUtil = require( 'SCENERY/accessibility/AccessibilityUtil' );
   var AccessiblePeer = require( 'SCENERY/accessibility/AccessiblePeer' );
+  var Emitter = require( 'AXON/Emitter' );
 
   // specific HTML tag names
   var INPUT_TAG = 'INPUT';
@@ -276,6 +277,10 @@ define( function( require ) {
 
           // @private {boolean} - if true, all accessible input will be halted on this Node.
           this._accessibleInputEnabled = true;
+
+          // @public (phet-io) used to emit an event to PhET-iO, see TNode and toEventOnEmit for more details.
+          this.startedCallbacksForKeydownEmitter = new Emitter();
+          this.endedCallbacksForKeydownEmitter = new Emitter();
         },
 
         /**
@@ -283,8 +288,8 @@ define( function( require ) {
          * functions to be called when that event is fired on the dom element. No input listeners will be fired
          * if this.accessibleInputEnabled is false.
          * @public
-         * 
-         * @param {Object} listener
+         *
+         * @param {Object} accessibleInput -  with a key of the event name (see DOM_EVENTS) and value of the listener.
          * @returns {Object} - the actually added listener, so it can be removed via removeAccessibleInputListener
          */
         addAccessibleInputListener: function( accessibleInput ) {
@@ -305,8 +310,14 @@ define( function( require ) {
                     self._inputValue = event.target.value;
                   }
 
+                  event.type === 'keydown' && self.startedCallbacksForKeydownEmitter.emit3( event.keyCode, event.key, {
+                    altKey: event.altKey,
+                    ctrlKey: event.ctrlKey,
+                    shiftKey: event.shiftKey
+                  } );
                   // call the original input listener
                   accessibleInput[ event.type ]( event );
+                  event.type === 'keydown' && self.endedCallbacksForKeydownEmitter.emit();
                 }
               };
             }
@@ -622,8 +633,8 @@ define( function( require ) {
          * But innerHTML is less performant because it triggers DOM restyling and insertions.
          *
          * If the content includes anything other than styling tags or has malformed HTML, we will fallback
-         * to textContent. 
-         * 
+         * to textContent.
+         *
          * @param {string} label
          */
         setAccessibleLabelAsHTML: function( label ) {
@@ -665,8 +676,8 @@ define( function( require ) {
          * But innerHTML is less performant because it triggers DOM restyling and insertions.
          *
          * If the content includes anything other than styling tags or has malformed HTML, we will fallback
-         * to textContent. 
-         * 
+         * to textContent.
+         *
          * @param {string} label
          */
         setAccessibleDescriptionAsHTML: function( textContent ) {
@@ -837,7 +848,7 @@ define( function( require ) {
          * referenced by the id, after any label content.  Exact behavior will depend on the user agent. This node must
          * have only one accessible instance so that value for 'aria-describedby' is unique.
          * @public
-         * 
+         *
          * @param {Node} node
          * @param {string} [association] 'NODE'|'LABEL'|'DESCRIPTION'|'PARENT_CONTAINER'
          */
@@ -861,7 +872,7 @@ define( function( require ) {
          * referenced by the id, before any description content.  Exact behavior will depend on the user agent. This
          * node must have only one accessible instance so that value for 'aria-labelledby' is unique.
          * @public
-         * 
+         *
          * @param {Node} node
          * @param {string} [association] 'NODE'|'LABEL'|'DESCRIPTION'|'PARENT_CONTAINER'
          */
@@ -1107,7 +1118,7 @@ define( function( require ) {
          * @public
          *
          * REVIEW: This function is not spelled correctly.
-         * 
+         *
          * @returns {boolean}
          */
         isFocussed: function() {
@@ -1125,7 +1136,7 @@ define( function( require ) {
          * has more than one instance, this will fail because the DOM element is not uniquely defined. If accessibility
          * is not enabled, this will be a no op. When Accessibility is more widely used, the no op can be replaced
          * with an assertion that checks for accessible content.
-         * 
+         *
          * @public
          */
         focus: function() {
@@ -1186,7 +1197,7 @@ define( function( require ) {
         /**
          * Do not use this function directly, it is private.  Updates the accessible label setting the
          * content as innerHTML or textContent based on whether or state of this._labelIsHTML flag.
-         * 
+         *
          * @private
          * @param {string} label
          */
@@ -1240,7 +1251,7 @@ define( function( require ) {
         },
 
         /**
-         * Update all AccessiblePeers representing this node with the callback, which takes the AccessiblePeer 
+         * Update all AccessiblePeers representing this node with the callback, which takes the AccessiblePeer
          * as an argument.
          * @private
          * @param {function} callback
@@ -1314,7 +1325,7 @@ define( function( require ) {
        * @private
        *
        * @param {AccessiblePeer} contentElement
-       * @param {HTMLElement} contentElement 
+       * @param {HTMLElement} contentElement
        * @param {boolean} prependLabels
        */
       function insertContentElement( accessiblePeer, contentElement, prependLabels ) {
