@@ -13,8 +13,10 @@ define( function( require ) {
   var cleanArray = require( 'PHET_CORE/cleanArray' );
   var Events = require( 'AXON/Events' );
   var inherit = require( 'PHET_CORE/inherit' );
+  var Matrix3 = require( 'DOT/Matrix3' );
   var Poolable = require( 'PHET_CORE/Poolable' );
   var scenery = require( 'SCENERY/scenery' );
+  var TransformTracker = require( 'SCENERY/util/TransformTracker' );
 
   var globalId = 1;
 
@@ -65,19 +67,44 @@ define( function( require ) {
 
       if ( this.isRootInstance ) {
         var accessibilityContainer = document.createElement( 'div' );
-        accessibilityContainer.className = 'accessibility';
-        accessibilityContainer.style.position = 'absolute';
-        accessibilityContainer.style.left = '0';
-        accessibilityContainer.style.top = '0';
-        accessibilityContainer.style.width = '0';
-        accessibilityContainer.style.height = '0';
-        accessibilityContainer.style.clip = 'rect(0,0,0,0)';
+
+        // so that the accessible content is invisible and doesn't interfere with other touch events
+        // other methods of making the DOM content invisible prevent mobile VoiceOver from sending events
+        accessibilityContainer.style.opacity = '0';
         accessibilityContainer.style.pointerEvents = 'none';
         this.peer = new scenery.AccessiblePeer( this, accessibilityContainer );
+
+        this.peerToLocalMatrix = Matrix3.IDENTITY;
       }
       else {
         this.peer = this.node.accessibleContent.createPeer( this );
         var childContainerElement = this.parent.peer.getChildContainerElement();
+
+        // add a mutation observer to recompute transforms when clientWidth or clientHeight change
+        var self = this;
+        var observer = new MutationObserver( function( mutations ) {
+          mutations.forEach( function( mutation ) {
+            self.updateCSSTransforms();
+          } );
+        } );
+
+        // configuration of the observer - trigger when attributes, inner content, or html structure changes
+        var config = { attributes: true, childList: true, characterData: true };
+        observer.observe( this.peer.domElement, config );
+
+        // @private {Matrix3} - identity until client width and height are defined
+        this.peerToLocalMatrix = Matrix3.IDENTITY;
+
+        // when global transform changes, update peer css transformations
+        var transformTracker = new TransformTracker( this.trail );
+        transformTracker.addListener( this.updateCSSTransforms.bind( this ) );
+
+        // required for correct rendering
+        this.peer.domElement.style.position = 'absolute';
+        this.peer.domElement.style.top = '0';
+        this.peer.domElement.style.left = '0';
+        this.peer.domElement.style.transformOrigin = 'left top';
+        this.peer.domElement.style.overflow = 'hiddden';
 
         // insert the peer's DOM element or its parent if it is contained in a parent element for structure
         childContainerElement.insertBefore( this.peer.getParentContainerElement(), childContainerElement.childNodes[ 0 ] );
@@ -104,6 +131,38 @@ define( function( require ) {
         'Initialized ' + this.toString() );
 
       return this;
+    },
+
+    /**
+     * Update the css transform of the AccessiblePeer. Correct CSS transformation is required by assistive technology
+     * to handle DOM events such as click and pointer down.
+     *
+     * TODO: This is needs to be cleaned up before merging into master. Also investigate ways to make this more
+     * efficient. Need to determine if this will cause performance degradation on slower platforms. See
+     * https://github.com/phetsims/scenery/issues/41
+     */
+    updateCSSTransforms: function() {
+
+      // inefficient version, can potentially combine later to not create extra matrices that aren't used
+      var localBounds = this.node.localBounds;
+      var clientWidth = this.peer.domElement.clientWidth;
+      var clientHeight = this.peer.domElement.clientHeight;
+
+      if ( clientWidth > 0 && clientHeight > 0 ) {
+        this.peerToLocalMatrix = Matrix3.translation( localBounds.minX, localBounds.minY ).multiplyMatrix( Matrix3.scale( localBounds.width / clientWidth, localBounds.height / clientHeight ) );
+      }
+      else {
+        this.peerToLocalMatrix = Matrix3.IDENTITY;
+      }
+
+      // ( inverted parent's peerToLocalMatrix ) * nodesToParent[ 0 ].getMatrix() * ... * nodesToParent[ n - 1 ].getMatrix() * ( our peerToLocalmatrix )
+      var matrix = this.parent.peerToLocalMatrix.inverted();
+      for ( var j = 0; j < this.trailDiff.length; j++ ) {
+        matrix = matrix.timesMatrix( this.trailDiff[ j ].getMatrix() );
+      }
+      matrix = matrix.timesMatrix( this.peerToLocalMatrix );
+
+      this.peer.domElement.style.transform = matrix.getCSSTransform();
     },
 
     /**

@@ -189,7 +189,14 @@ define( function( require ) {
       // Additionally, IE had some issues with skipping prevent default, see
       // https://github.com/phetsims/scenery/issues/464 for mouse handling.
       if ( callback !== this.mouseDown || platform.ie || platform.edge ) {
-        domEvent.preventDefault();
+
+        // don't prevent default for these events so that mobile voice over can send events to the accessible DOM
+        if ( domEvent.type === 'touchstart' || domEvent.type === 'touchend' ) {
+          return;
+        }
+        else {
+          domEvent.preventDefault();
+        }
       }
     },
 

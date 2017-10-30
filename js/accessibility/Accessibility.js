@@ -1618,7 +1618,9 @@ define( function( require ) {
 
         // Safari requires that certain input elements have width, otherwise it will not be keyboard accessible
         if ( _.includes( ELEMENTS_REQUIRE_WIDTH, upperCaseTagName ) ) {
-          domElement.style.width = '1px';
+
+          // See https://github.com/phetsims/scenery/issues/41, this is no longer required after updating PDOM bounds
+          // domElement.style.width = '1px';
         }
 
         return domElement;
